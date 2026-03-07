@@ -10,11 +10,6 @@ class BCDCode(ABC):
     def decode(self, tetrad: int) -> int:
         pass
 
-class BCD8421(BCDCode):
-    def encode(self, digit: int) -> int:
-        return digit
-    def decode(self, tetrad: int) -> int:
-        return tetrad if 0 <= tetrad <= 9 else None
 
 class BCD2421(BCDCode):
     _encode = [0b0000, 0b0001, 0b0010, 0b0011, 0b0100, 0b1011, 0b1100, 0b1101, 0b1110, 0b1111]
@@ -24,32 +19,6 @@ class BCD2421(BCDCode):
     def decode(self, tetrad: int) -> int:
         return self._decode.get(tetrad)
 
-class BCD5421(BCDCode):
-    _encode = [0b0000, 0b0001, 0b0010, 0b0011, 0b0100, 0b1000, 0b1001, 0b1010, 0b1011, 0b1100]
-    _decode = {v: k for k, v in enumerate(_encode)}
-    def encode(self, digit: int) -> int:
-        return self._encode[digit]
-    def decode(self, tetrad: int) -> int:
-        return self._decode.get(tetrad)
-
-class Excess3(BCDCode):
-    def encode(self, digit: int) -> int:
-        return digit + 3
-    def decode(self, tetrad: int) -> int:
-        d = tetrad - 3
-        return d if 0 <= d <= 9 else None
-
-class GrayBCD(BCDCode):
-    def encode(self, digit: int) -> int:
-        g = digit ^ (digit >> 1)
-        return g & 0xF
-    def decode(self, tetrad: int) -> int:
-        b = tetrad
-        mask = b >> 1
-        while mask:
-            b ^= mask
-            mask >>= 1
-        return b if 0 <= b <= 9 else None
 
 class BCDAdder:
     def __init__(self, code: BCDCode):

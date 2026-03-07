@@ -12,11 +12,8 @@ class DirectMultiplier:
         conv2 = BinaryCodeConverter(num2)
         sign = conv1.sign ^ conv2.sign
 
-        # Умножение модулей (31 бит) вручную
-        prod_bits = multiply_bin_arrays(conv1.mod_bits, conv2.mod_bits)  # длина 62
-        # Оставляем младшие 31 бит (как в исходном коде)
-        prod_mod_bits = prod_bits[-31:]  # берём правую половину
-        # Если произведение нулевое, все биты нули
+        prod_bits = multiply_bin_arrays(conv1.mod_bits, conv2.mod_bits)
+        prod_mod_bits = prod_bits[-31:]
         if bin_array_to_int(prod_mod_bits) == 0 and bin_array_to_int(prod_bits[:-31]) == 0:
             prod_mod_bits = [0] * 31
         result_bits = [sign] + prod_mod_bits

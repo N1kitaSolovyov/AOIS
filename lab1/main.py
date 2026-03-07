@@ -4,7 +4,7 @@ from additional_arithmetic import AdditionalArithmetic
 from direct_arithmetic import DirectMultiplier, DirectDivider
 from ieee754 import IEEE754Binary32
 from bcd import (
-    BCD8421, BCD2421, BCD5421, Excess3, GrayBCD, BCDAdder
+     BCD2421, BCDAdder
 )
 
 def print_bits(bits: list, title: str = ""):
@@ -136,23 +136,7 @@ def main():
             print("  десятичное значение:", IEEE754Binary32.to_float(res_bits))
 
         elif choice == '7':
-            print("Выберите вариант BCD-кода:")
-            print("a - 8421 BCD")
-            print("b - 2421 BCD")
-            print("c - 5421 BCD")
-            print("d - Excess-3")
-            print("e - Gray BCD")
-            code_choice = input("Ваш выбор (a/b/c/d/e): ").strip().lower()
-            if code_choice not in 'abcde':
-                print("Неверный выбор")
-                continue
-            code_map = {
-                'a': BCD8421(),
-                'b': BCD2421(),
-                'c': BCD5421(),
-                'd': Excess3(),
-                'e': GrayBCD()
-            }
+            from bcd import BCD2421, BCDAdder
             try:
                 num1 = int(input("Введите первое число (целое неотрицательное): "))
                 num2 = int(input("Введите второе число: "))
@@ -162,16 +146,17 @@ def main():
             except:
                 print("Ошибка ввода")
                 continue
-            adder = BCDAdder(code_map[code_choice])
+            adder = BCDAdder(BCD2421())
             tetrads, dec = adder.add(num1, num2)
+            # Преобразуем список тетрад (8 чисел) в 32-битный список битов
             bits = []
             for t in tetrads:
+                # Каждая тетрада – это 4 бита (от старшего к младшему)
                 for shift in range(3, -1, -1):
                     bits.append((t >> shift) & 1)
-            print("\nРезультат сложения в BCD-коде (32 бита):")
+            print("\nРезультат сложения в коде 2421 (32 бита):")
             print_bits(bits)
             print("Десятичное значение:", dec)
-
         else:
             print("Неверный пункт, попробуйте снова.")
 

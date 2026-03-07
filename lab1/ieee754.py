@@ -133,13 +133,10 @@ class IEEE754Binary32:
             man2_shifted = man2
             G = R = S = 0
 
-        # Операция в зависимости от знаков
-        if s1 == s2:  # сложение
+        if s1 == s2:
             sum_man = man1 + man2_shifted
-            # округление
             if G == 1 and (R == 1 or S == 1 or (sum_man & 1 == 1)):
                 sum_man += 1
-            # нормализация
             if sum_man >= (1 << 24):
                 sum_man >>= 1
                 exp1 += 1
@@ -147,7 +144,7 @@ class IEEE754Binary32:
                 sum_man <<= 1
                 exp1 -= 1
             sign_res = s1
-        else:  # вычитание
+        else:
             if man1 > man2_shifted:
                 diff = man1 - man2_shifted
                 sign_res = s1
@@ -159,9 +156,7 @@ class IEEE754Binary32:
                 if G == 1 and (R == 1 or S == 1 or (diff & 1 == 1)):
                     diff += 1
             else:
-                # равны
                 return 0
-            # нормализация разности
             if diff == 0:
                 return 0
             while diff < (1 << 23):
@@ -169,7 +164,6 @@ class IEEE754Binary32:
                 exp1 -= 1
             sum_man = diff
 
-        # Упаковка
         if sum_man == 0:
             return 0
         if sum_man >= (1 << 23):
@@ -190,89 +184,67 @@ class IEEE754Binary32:
 
     @classmethod
     def sub(cls, a_bits: int, b_bits: int) -> int:
-        """Вычитание через сложение с изменённым знаком."""
         b_neg = b_bits ^ (1 << 31)
         return cls.add(a_bits, b_neg)
 
     @classmethod
     def mul(cls, a_bits: int, b_bits: int) -> int:
-        """Умножение двух binary32 чисел."""
         s1, e1, m1 = cls._unpack(a_bits)
         s2, e2, m2 = cls._unpack(b_bits)
 
-        # Обработка специальных случаев
         if e1 == 0xFF or e2 == 0xFF:
-            # inf или NaN
             if e1 == 0xFF and m1 != 0:
-                return a_bits  # NaN
+                return a_bits
             if e2 == 0xFF and m2 != 0:
-                return b_bits  # NaN
-            # inf * 0 -> NaN
+                return b_bits
             if (e1 == 0xFF and e2 == 0 and m2 == 0) or (e2 == 0xFF and e1 == 0 and m1 == 0):
                 return 0x7FC00000
-            # inf * число -> inf со знаком
             sign_res = s1 ^ s2
             return cls._pack(sign_res, 0xFF, 0)
 
         if e1 == 0 and m1 == 0 or e2 == 0 and m2 == 0:
-            # Умножение на ноль
             return 0
 
-        # Получаем 24-битную мантиссу
         man1 = m1 | (1 << 23) if e1 != 0 else m1
         man2 = m2 | (1 << 23) if e2 != 0 else m2
         exp1 = e1 - 127 if e1 != 0 else -126
         exp2 = e2 - 127 if e2 != 0 else -126
 
-        # Знак результата
         sign_res = s1 ^ s2
 
-        # Умножение мантисс (24 бита * 24 бита -> до 48 бит)
         prod_man = man1 * man2
-        # Нормализация
         if prod_man & (1 << 47):
-            # Старший бит установлен -> сдвиг вправо
             prod_man >>= 1
             exp_res = exp1 + exp2 + 1
         else:
             exp_res = exp1 + exp2
 
-        # Округление (упрощённое: отбрасываем младшие биты)
-        # Здесь можно реализовать более аккуратное округление, но для простоты сдвинем
         while prod_man >= (1 << 24):
             prod_man >>= 1
             exp_res += 1
-        # Теперь prod_man < 2^24
         if prod_man < (1 << 23):
             prod_man <<= 1
             exp_res -= 1
 
-        # Проверка экспоненты
         biased_exp = exp_res + 127
         if biased_exp >= 0xFF:
             return cls._pack(sign_res, 0xFF, 0)  # inf
         if biased_exp <= 0:
-            # Денормализованное или ноль
-            # Упрощённо: ноль
             return 0
         mant_res = prod_man - (1 << 23)
         return cls._pack(sign_res, biased_exp, mant_res)
 
     @classmethod
     def div(cls, a_bits: int, b_bits: int) -> int:
-        """Деление двух binary32 чисел (a / b)."""
         s1, e1, m1 = cls._unpack(a_bits)
         s2, e2, m2 = cls._unpack(b_bits)
 
-        # Обработка специальных случаев
         if e2 == 0xFF:
             if e2 == 0xFF and m2 != 0:
-                return b_bits  # NaN
-            # деление на inf
+                return b_bits
             if e1 == 0xFF:
                 if m1 != 0:
-                    return a_bits  # NaN
-                # inf / inf -> NaN
+                    return a_bits
                 return 0x7FC00000
             # число / inf -> 0 со знаком
             return cls._pack(s1 ^ s2, 0, 0)
@@ -297,8 +269,6 @@ class IEEE754Binary32:
 
         sign_res = s1 ^ s2
 
-        # Деление мантисс: man1 / man2, результат нормализовать к [1,2)
-        # Для увеличения точности сдвинем man1 влево
         man1 <<= 23
         # Выполняем целочисленное деление
         if man2 == 0:
