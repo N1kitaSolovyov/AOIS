@@ -599,6 +599,20 @@ class KarnaughMap:
 
         return ''.join(bits_by_var[var] for var in self.vars)
 
+    @staticmethod
+    def _cyclic_strip(start: int, length: int, limit: int) -> Tuple[int, ...]:
+        """Циклический отрезок индексов: (start, start+1, ...) mod limit."""
+        return tuple((start + k) % limit for k in range(length))
+
+    @staticmethod
+    def _power_of_two_sizes(limit: int) -> List[int]:
+        """Степени двойки, не превышающие limit: 1, 2, 4, ..."""
+        s, result = 1, []
+        while s <= limit:
+            result.append(s)
+            s *= 2
+        return result
+
     def _find_rectangles_2d_generic(
         self,
         data,
@@ -611,82 +625,71 @@ class KarnaughMap:
         target: int,
         form: str,
     ):
-        ext_data = [
-            [data[i % rows][j % cols] for j in range(cols * 2)]
-            for i in range(rows * 2)
-        ]
+        # Множество целевых ячеек
+        target_cells = {
+            (r, c) for r in range(rows) for c in range(cols)
+            if data[r][c] == target
+        }
 
-        sizes = [
-            (height, width)
-            for height in (1, 2, 4, 8)
-            if height <= rows
-            for width in (1, 2, 4, 8)
-            if width <= cols
-        ]
+        if not target_cells:
+            return []
 
-        rectangles = []
+        # Генерируем все допустимые полосы строк и столбцов (циклические)
+        row_strips = {
+            frozenset(self._cyclic_strip(start, size, rows))
+            for size in self._power_of_two_sizes(rows)
+            for start in range(rows)
+        }
 
-        for top in range(rows):
-            for left in range(cols):
-                for height, width in sizes:
-                    ok = True
+        col_strips = {
+            frozenset(self._cyclic_strip(start, size, cols))
+            for size in self._power_of_two_sizes(cols)
+            for start in range(cols)
+        }
 
-                    for i in range(top, top + height):
-                        for j in range(left, left + width):
-                            if ext_data[i][j] != target:
-                                ok = False
-                                break
+        # Для каждой строки — множество столбцов с target
+        cols_for_row = {
+            r: frozenset(c for c in range(cols) if data[r][c] == target)
+            for r in range(rows)
+        }
 
-                        if not ok:
-                            break
+        # Перебираем (row_strip × col_strip), проверяем через пересечение множеств
+        unique: Dict[Tuple[Tuple[int, ...], Tuple[int, ...]], Tuple[Set[int], Set[int]]] = {}
 
-                    if ok:
-                        rect_rows = [(top + i) % rows for i in range(height)]
-                        rect_cols = [(left + j) % cols for j in range(width)]
-                        rectangles.append((rect_rows, rect_cols))
+        for rs in row_strips:
+            # Столбцы, где target стоит во ВСЕХ строках полосы
+            common_cols = frozenset.intersection(*(cols_for_row[r] for r in rs))
 
-        unique_rectangles = {}
+            for cs in col_strips:
+                if not cs.issubset(common_cols):
+                    continue
 
-        for rect_rows, rect_cols in rectangles:
-            key = (
-                tuple(sorted(set(rect_rows))),
-                tuple(sorted(set(rect_cols))),
+                key = (tuple(sorted(rs)), tuple(sorted(cs)))
+                if key not in unique:
+                    unique[key] = (set(rs), set(cs))
+
+        # Убираем не-максимальные
+        rects = list(unique.values())
+
+        maximal = [
+            rect for i, rect in enumerate(rects)
+            if not any(
+                i != j
+                and rect[0] <= other[0]
+                and rect[1] <= other[1]
+                for j, other in enumerate(rects)
             )
-
-            unique_rectangles[key] = (list(key[0]), list(key[1]))
-
-        rectangles = list(unique_rectangles.values())
-
-        def is_subset(rect1, rect2):
-            return set(rect1[0]).issubset(rect2[0]) and set(rect1[1]).issubset(rect2[1])
-
-        maximal = []
-
-        for i, rect in enumerate(rectangles):
-            if any(i != j and is_subset(rect, other) for j, other in enumerate(rectangles)):
-                continue
-
-            maximal.append(rect)
+        ]
 
         result = []
 
-        for rect_rows, rect_cols in maximal:
+        for row_set, col_set in maximal:
             pattern = self._pattern_from_row_col_sets(
-                rect_rows,
-                rect_cols,
-                row_labels,
-                col_labels,
-                row_var_names,
-                col_var_names,
+                list(row_set), list(col_set),
+                row_labels, col_labels,
+                row_var_names, col_var_names,
             )
-
-            result.append(
-                (
-                    set(rect_rows),
-                    set(rect_cols),
-                    self._pattern_to_expr(pattern, form=form),
-                )
-            )
+            result.append((row_set, col_set, self._pattern_to_expr(pattern, form=form)))
 
         return result
 
@@ -712,125 +715,6 @@ class KarnaughMap:
             form='dnf',
         )
 
-    @staticmethod
-    def _axis_group_sizes(axis_size: int) -> Tuple[int, ...]:
-        sizes = []
-        size = 1
-
-        while size <= axis_size:
-            sizes.append(size)
-            size *= 2
-
-        return tuple(sizes)
-
-    @staticmethod
-    def _cyclic_range(start: int, length: int, limit: int) -> Tuple[int, ...]:
-        return tuple((start + offset) % limit for offset in range(length))
-
-    @staticmethod
-    def _normalize_3d_rectangle(rectangle):
-        return tuple(tuple(sorted(set(axis))) for axis in rectangle)
-
-    @staticmethod
-    def _is_3d_subset(inner, outer) -> bool:
-        return all(
-            set(inner_axis).issubset(set(outer_axis))
-            for inner_axis, outer_axis in zip(inner, outer)
-        )
-
-    @staticmethod
-    def _target_cells_3d(
-        data3d,
-        rows: int,
-        cols: int,
-        target: int,
-    ) -> Set[Tuple[int, int, int]]:
-        return {
-            (layer, row, col)
-            for layer, row, col in product(range(2), range(rows), range(cols))
-            if data3d[layer][row][col] == target
-        }
-
-    def _iter_3d_rectangles(self, rows: int, cols: int):
-        layer_sizes = (1, 2)
-        row_sizes = self._axis_group_sizes(rows)
-        col_sizes = self._axis_group_sizes(cols)
-
-        for layer_size, row_size, col_size in product(layer_sizes, row_sizes, col_sizes):
-            for layer_start in range(2 - layer_size + 1):
-                layer_range = tuple(range(layer_start, layer_start + layer_size))
-
-                for row_start, col_start in product(range(rows), range(cols)):
-                    row_range = self._cyclic_range(row_start, row_size, rows)
-                    col_range = self._cyclic_range(col_start, col_size, cols)
-
-                    yield layer_range, row_range, col_range
-
-    @staticmethod
-    def _is_target_rectangle_3d(data3d, rectangle, target: int) -> bool:
-        layer_range, row_range, col_range = rectangle
-
-        return all(
-            data3d[layer][row][col] == target
-            for layer, row, col in product(layer_range, row_range, col_range)
-        )
-
-    def _get_maximal_3d_rectangles(self, rectangles):
-        unique_rectangles = []
-        seen = set()
-
-        for rectangle in rectangles:
-            normalized = self._normalize_3d_rectangle(rectangle)
-
-            if normalized not in seen:
-                seen.add(normalized)
-                unique_rectangles.append(normalized)
-
-        maximal = []
-
-        for i, rectangle in enumerate(unique_rectangles):
-            is_inside_bigger = any(
-                i != j and self._is_3d_subset(rectangle, other)
-                for j, other in enumerate(unique_rectangles)
-            )
-
-            if not is_inside_bigger:
-                maximal.append(rectangle)
-
-        return maximal
-
-    def _term_from_3d_rectangle(
-        self,
-        layer_range,
-        row_range,
-        col_range,
-        form: str,
-    ) -> str:
-        if self.layer_var is None:
-            raise ValueError('Для карты Карно из 5 переменных не задана переменная слоя')
-
-        bits_by_var = {var: '-' for var in self.vars}
-
-        if len(layer_range) == 1:
-            bits_by_var[self.layer_var] = str(layer_range[0])
-
-        row_col_pattern = self._pattern_from_row_col_sets(
-            row_range,
-            col_range,
-            self.row_labels,
-            self.col_labels,
-            self.row_vars,
-            self.col_vars,
-        )
-
-        for var, ch in zip(self.vars, row_col_pattern):
-            if ch != '-':
-                bits_by_var[var] = ch
-
-        pattern = ''.join(bits_by_var[var] for var in self.vars)
-
-        return self._pattern_to_expr(pattern, form=form)
-
     def _find_rectangles_3d_generic(
         self,
         data3d,
@@ -839,28 +723,119 @@ class KarnaughMap:
         target: int,
         form: str,
     ) -> List[Tuple[Set[Tuple[int, int, int]], str]]:
-        valid_rectangles = [
-            rectangle
-            for rectangle in self._iter_3d_rectangles(rows, cols)
-            if self._is_target_rectangle_3d(data3d, rectangle, target)
-        ]
+        """Поиск максимальных прямоугольных областей для 5-переменной карты Карно.
 
-        maximal_rectangles = self._get_maximal_3d_rectangles(valid_rectangles)
+        Карта из 5 переменных — это два слоя (layer=0, layer=1) 4×4 карт.
+        Прямоугольник может лежать в одном слое или охватывать оба.
+        Алгоритм: находим 2D-прямоугольники в каждом слое отдельно, затем
+        пробуем объединить совпадающие прямоугольники из двух слоёв.
+        """
+        if self.layer_var is None:
+            raise ValueError('Для карты Карно из 5 переменных не задана переменная слоя')
 
-        covers = []
+        # --- Шаг 1: найти 2D-прямоугольники в каждом слое ---
+        layer_rects: List[List[Tuple[Set[int], Set[int]]]] = [[], []]
 
-        for layer_range, row_range, col_range in maximal_rectangles:
-            cover = set(product(layer_range, row_range, col_range))
-            term = self._term_from_3d_rectangle(
-                layer_range,
-                row_range,
-                col_range,
-                form,
+        for layer_idx in range(2):
+            rects_2d = self._find_rectangles_2d_generic(
+                data3d[layer_idx], rows, cols,
+                self.row_labels, self.col_labels,
+                self.row_vars, self.col_vars,
+                target=target, form=form,
             )
 
+            for row_set, col_set, _ in rects_2d:
+                layer_rects[layer_idx].append((row_set, col_set))
+
+        # --- Шаг 2: собрать все кандидаты (слой, row_set, col_set) ---
+        NormalizedRect = Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]
+        candidates: Dict[NormalizedRect, Tuple[Set[int], Set[int], Set[int]]] = {}
+
+        def add_candidate(layers: Set[int], r_set: Set[int], c_set: Set[int]):
+            key: NormalizedRect = (
+                tuple(sorted(layers)),
+                tuple(sorted(r_set)),
+                tuple(sorted(c_set)),
+            )
+
+            if key not in candidates:
+                candidates[key] = (layers, r_set, c_set)
+
+        # Одиночные слои
+        for layer_idx in range(2):
+            for row_set, col_set in layer_rects[layer_idx]:
+                add_candidate({layer_idx}, row_set, col_set)
+
+        # Объединение через оба слоя: пересечение прямоугольников
+        for r_set_0, c_set_0 in layer_rects[0]:
+            for r_set_1, c_set_1 in layer_rects[1]:
+                common_rows = r_set_0 & r_set_1
+                common_cols = c_set_0 & c_set_1
+
+                if not common_rows or not common_cols:
+                    continue
+
+                # Проверяем что пересечение — степени двойки по каждой оси
+                if len(common_rows) not in (1, 2, 4) or len(common_cols) not in (1, 2, 4):
+                    continue
+
+                # Все ячейки пересечения в обоих слоях уже == target
+                # (гарантировано тем, что исходные прямоугольники валидны)
+                add_candidate({0, 1}, common_rows, common_cols)
+
+        # --- Шаг 3: убрать не-максимальные ---
+        rect_list = list(candidates.values())
+        maximal = [
+            rect for i, rect in enumerate(rect_list)
+            if not any(
+                i != j
+                and rect[0] <= other[0]
+                and rect[1] <= other[1]
+                and rect[2] <= other[2]
+                for j, other in enumerate(rect_list)
+            )
+        ]
+
+        # --- Шаг 4: построить покрытия и термы ---
+        covers: List[Tuple[Set[Tuple[int, int, int]], str]] = []
+
+        for layer_set, row_set, col_set in maximal:
+            cover = {
+                (layer, row, col)
+                for layer in layer_set
+                for row in row_set
+                for col in col_set
+            }
+
+            pattern = self._pattern_for_3d_rect(layer_set, row_set, col_set)
+            term = self._pattern_to_expr(pattern, form=form)
             covers.append((cover, term))
 
         return covers
+
+    def _pattern_for_3d_rect(
+        self,
+        layer_set: Set[int],
+        row_set: Set[int],
+        col_set: Set[int],
+    ) -> str:
+        """Построить битовый шаблон (например '1-0--') для 3D-прямоугольника."""
+        bits_by_var = {var: '-' for var in self.vars}
+
+        if len(layer_set) == 1:
+            bits_by_var[self.layer_var] = str(next(iter(layer_set)))
+
+        row_col_pattern = self._pattern_from_row_col_sets(
+            list(row_set), list(col_set),
+            self.row_labels, self.col_labels,
+            self.row_vars, self.col_vars,
+        )
+
+        for var, ch in zip(self.vars, row_col_pattern):
+            if ch != '-':
+                bits_by_var[var] = ch
+
+        return ''.join(bits_by_var[var] for var in self.vars)
 
     def _select_exact_cover_indices(
         self,
@@ -1102,7 +1077,13 @@ class KarnaughMap:
         cols = len(self.col_labels)
         data3d = [map0, map1]
 
-        cells = self._target_cells_3d(data3d, rows, cols, target)
+        cells = {
+            (layer, row, col)
+            for layer in range(2)
+            for row in range(rows)
+            for col in range(cols)
+            if data3d[layer][row][col] == target
+        }
         covers = self._find_rectangles_3d_generic(data3d, rows, cols, target, form)
 
         return finalize(covers)
